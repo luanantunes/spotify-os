@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import { Play, Pause, SkipForward, SkipBack, Music, Terminal } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn } from 'lucide-react';
 import { Vinyl3D } from './components/3d/Vinyl3D.jsx';
 
 export default function App() {
@@ -11,6 +11,64 @@ export default function App() {
     artist: "NEXUS CORE",
     progress: 42
   });
+
+  // Função para gerar String Aleatória (PKCE Code Verifier)
+  const generateRandomString = (length) => {
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const values = crypto.getRandomValues(new Uint8Array(length));
+    return values.reduce((acc, x) => acc + possible[x % possible.length], '');
+  };
+
+  // Função para gerar o Code Challenge SHA-256
+  const sha256 = async (plain) => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plain);
+    return window.crypto.subtle.digest('SHA-256', data);
+  };
+
+  const base64encode = (input) => {
+    return btoa(String.fromCharCode(...new Uint8Array(input)))
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  };
+
+  // Handler de Login no Spotify via PKCE
+  const handleSpotifyLogin = async () => {
+    const clientId = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
+    const redirectUri = import.meta.env.VITE_SPOTIFY_REDIRECT_URI;
+
+    if (!clientId || !redirectUri) {
+      alert("Erro: Variáveis VITE_SPOTIFY_CLIENT_ID ou VITE_SPOTIFY_REDIRECT_URI não foram carregadas.");
+      return;
+    }
+
+    const codeVerifier = generateRandomString(64);
+    const hashed = await sha256(codeVerifier);
+    const codeChallenge = base64encode(hashed);
+
+    // Salva o verifier no localStorage para validar depois na callback
+    window.localStorage.setItem('code_verifier', codeVerifier);
+
+    const scopes = [
+      'user-read-private',
+      'user-read-email',
+      'streaming',
+      'user-playback-state',
+      'user-modify-playback-state'
+    ].join(' ');
+
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      scope: scopes,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+      redirect_uri: redirectUri,
+    });
+
+    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+  };
 
   return (
     <div className="relative w-screen h-screen bg-cyber-bg select-none overflow-hidden flex flex-col justify-between p-6">
@@ -39,13 +97,13 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-400">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-cyber-neonGreen animate-pulse"></span>
-            SYSTEM ONLINE
-          </span>
-          <span className="border border-cyber-border px-2 py-1 rounded bg-black/40">
-            RARITY: EPIC
-          </span>
+          <button 
+            onClick={handleSpotifyLogin}
+            className="flex items-center gap-2 bg-cyber-neonGreen/10 border border-cyber-neonGreen text-cyber-neonGreen px-3 py-1.5 rounded-lg hover:bg-cyber-neonGreen hover:text-black transition cursor-pointer font-semibold"
+          >
+            <LogIn className="w-4 h-4" />
+            CONNECT SPOTIFY
+          </button>
         </div>
       </header>
 
