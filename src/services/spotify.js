@@ -1,7 +1,7 @@
 // src/services/spotify.js
 
-const CLIENT_ID = "f4ae9203ee034084ab94d5ddbf94067b";
-const REDIRECT_URI = import.meta.env.VITE_SPOTIFY_REDIRECT_URI || window.location.origin;
+const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b';
+const REDIRECT_URI = window.location.origin;
 
 function generateCodeVerifier(length = 64) {
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -35,23 +35,20 @@ function getCookie(name) {
 }
 
 export async function redirectToSpotify() {
-  if (!CLIENT_ID) {
-    alert("Erro: VITE_SPOTIFY_CLIENT_ID não configurado nas variáveis do Cloudflare!");
-    return;
-  }
-
   const verifier = generateCodeVerifier(64);
   const challenge = await generateCodeChallenge(verifier);
 
   window.localStorage.setItem('code_verifier', verifier);
   setCookie('code_verifier', verifier);
 
+  // Escopos completos e atualizados para permissão total
   const scopes = [
     'user-read-private',
     'user-read-email',
     'user-read-playback-state',
     'user-modify-playback-state',
-    'user-read-currently-playing'
+    'user-read-currently-playing',
+    'user-read-recently-played'
   ].join(' ');
 
   const params = new URLSearchParams({
@@ -69,10 +66,7 @@ export async function redirectToSpotify() {
 export async function handleAuthCallback(code) {
   let codeVerifier = window.localStorage.getItem('code_verifier') || getCookie('code_verifier');
 
-  if (!codeVerifier) {
-    console.error("Verifier ausente.");
-    return null;
-  }
+  if (!codeVerifier) return null;
 
   try {
     const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -106,7 +100,6 @@ export async function handleAuthCallback(code) {
   }
 }
 
-// Renovação Automática do Token expirado
 export async function refreshAccessToken() {
   const refreshToken = window.localStorage.getItem('spotify_refresh_token');
   if (!refreshToken) return null;
