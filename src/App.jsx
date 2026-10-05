@@ -1,74 +1,97 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn, LogOut, User } from 'lucide-react';
 import { Vinyl3D } from './components/3d/Vinyl3D.jsx';
+import { 
+  redirectToSpotify, 
+  handleAuthCallback, 
+  fetchUserProfile, 
+  fetchCurrentlyPlaying, 
+  togglePlayback, 
+  logoutSpotify 
+} from './services/spotify.js';
 
 export default function App() {
+  const [token, setToken] = useState(window.localStorage.getItem('spotify_access_token'));
+  const [user, setUser] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [track] = useState({
-    title: "CYBERPUNK_SYNTH_WAVE.WAV",
-    artist: "NEXUS CORE",
-    progress: 42
+  const [track, setTrack] = useState({
+    title: "NO TRACK PLAYING",
+    artist: "CONNECT & PLAY MUSIC",
+    albumArt: null,
+    progressMs: 0,
+    durationMs: 225000
   });
 
-  // Função para gerar String Aleatória (PKCE Code Verifier)
-  const generateRandomString = (length) => {
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const values = crypto.getRandomValues(new Uint8Array(length));
-    return values.reduce((acc, x) => acc + possible[x % possible.length], '');
+  // Processa Callback e Inicializa Sessão
+  useEffect(() => {
+    const initAuth = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get('code');
+
+      let currentToken = token;
+
+      if (code) {
+        currentToken = await handleAuthCallback(code);
+        if (currentToken) setToken(currentToken);
+      }
+
+      if (currentToken) {
+        const profile = await fetchUserProfile(currentToken);
+        if (profile) {
+          setUser(profile);
+        } else {
+          logoutSpotify(); // Se o token estiver vencido/inválido
+        }
+      }
+    };
+
+    initAuth();
+  }, []);
+
+  // Polling para atualizar o que está tocando a cada 3 segundos
+  useEffect(() => {
+    if (!token) return;
+
+    const updatePlayer = async () => {
+      const data = await fetchCurrentlyPlaying(token);
+      if (data && data.item) {
+        setIsPlaying(data.is_playing);
+        setTrack({
+          title: data.item.name,
+          artist: data.item.artists.map(a => a.name).join(', '),
+          albumArt: data.item.album.images[0]?.url || null,
+          progressMs: data.progress_ms,
+          durationMs: data.item.duration_ms
+        });
+      }
+    };
+
+    updatePlayer();
+    const interval = setInterval(updatePlayer, 3000);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  // Formatação de Tempo (ms -> MM:SS)
+  const formatTime = (ms) => {
+    if (!ms) return '00:00';
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Função para gerar o Code Challenge SHA-256
-  const sha256 = async (plain) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plain);
-    return window.crypto.subtle.digest('SHA-256', data);
-  };
-
-  const base64encode = (input) => {
-    return btoa(String.fromCharCode(...new Uint8Array(input)))
-      .replace(/=/g, '')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_');
-  };
-
-  // Handler de Login no Spotify via PKCE
-  const handleSpotifyLogin = async () => {
-    const clientId = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
-    const redirectUri = import.meta.env.VITE_SPOTIFY_REDIRECT_URI;
-
-    if (!clientId || !redirectUri) {
-      alert("Erro: Variáveis VITE_SPOTIFY_CLIENT_ID ou VITE_SPOTIFY_REDIRECT_URI não foram carregadas.");
-      return;
+  const handlePlayPause = async () => {
+    if (token) {
+      await togglePlayback(token, isPlaying);
+      setIsPlaying(!isPlaying);
+    } else {
+      setIsPlaying(!isPlaying); // Fallback local de teste
     }
-
-    const codeVerifier = generateRandomString(64);
-    const hashed = await sha256(codeVerifier);
-    const codeChallenge = base64encode(hashed);
-
-    // Salva o verifier no localStorage para validar depois na callback
-    window.localStorage.setItem('code_verifier', codeVerifier);
-
-    const scopes = [
-      'user-read-private',
-      'user-read-email',
-      'streaming',
-      'user-playback-state',
-      'user-modify-playback-state'
-    ].join(' ');
-
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id: clientId,
-      scope: scopes,
-      code_challenge_method: 'S256',
-      code_challenge: codeChallenge,
-      redirect_uri: redirectUri,
-    });
-
-    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
   };
+
+  const progressPercent = track.durationMs ? (track.progressMs / track.durationMs) * 100 : 0;
 
   return (
     <div className="relative w-screen h-screen bg-cyber-bg select-none overflow-hidden flex flex-col justify-between p-6">
@@ -81,7 +104,7 @@ export default function App() {
           <pointLight position={[10, 10, 10]} color="#00ff66" intensity={1.5} />
           <pointLight position={[-10, -10, -10]} color="#00f0ff" intensity={1.5} />
           <Vinyl3D isPlaying={isPlaying} />
-          <OrbitControls enableZoom={false} enablePan={false} />
+          <OrbitControls enablePan={false} enableZoom={false} />
         </Canvas>
       </div>
 
@@ -96,14 +119,35 @@ export default function App() {
             SPOTIFY_OS // v0.9.2
           </span>
         </div>
-        <div className="flex items-center gap-4 text-xs text-slate-400">
-          <button 
-            onClick={handleSpotifyLogin}
-            className="flex items-center gap-2 bg-cyber-neonGreen/10 border border-cyber-neonGreen text-cyber-neonGreen px-3 py-1.5 rounded-lg hover:bg-cyber-neonGreen hover:text-black transition cursor-pointer font-semibold"
-          >
-            <LogIn className="w-4 h-4" />
-            CONNECT SPOTIFY
-          </button>
+
+        <div className="flex items-center gap-4 text-xs">
+          {user ? (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 bg-black/50 border border-cyber-border px-3 py-1.5 rounded-lg text-slate-200">
+                {user.images?.[0]?.url ? (
+                  <img src={user.images[0].url} alt="Profile" className="w-5 h-5 rounded-full object-cover" />
+                ) : (
+                  <User className="w-4 h-4 text-cyber-cyan" />
+                )}
+                <span className="font-semibold text-xs">{user.display_name}</span>
+              </div>
+              <button 
+                onClick={logoutSpotify}
+                className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/40 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-500 hover:text-white transition cursor-pointer font-semibold"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                LOGOUT
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={redirectToSpotify}
+              className="flex items-center gap-2 bg-cyber-neonGreen/10 border border-cyber-neonGreen text-cyber-neonGreen px-3 py-1.5 rounded-lg hover:bg-cyber-neonGreen hover:text-black transition cursor-pointer font-semibold shadow-[0_0_15px_rgba(0,255,102,0.2)]"
+            >
+              <LogIn className="w-4 h-4" />
+              CONNECT SPOTIFY
+            </button>
+          )}
         </div>
       </header>
 
@@ -125,10 +169,19 @@ export default function App() {
 
         {/* Player UI Body */}
         <div className="p-6 flex flex-col gap-6">
+          {/* Capa do Álbum ou Áudio Ativo */}
+          {track.albumArt && (
+            <div className="w-24 h-24 mx-auto rounded-lg overflow-hidden border border-cyber-border shadow-[0_0_20px_rgba(0,240,255,0.2)]">
+              <img src={track.albumArt} alt="Album Art" className="w-full h-full object-cover" />
+            </div>
+          )}
+
           <div className="text-center space-y-1">
-            <p className="text-xs text-cyber-cyan tracking-wider uppercase font-semibold">TOCANDO AGORA</p>
-            <h2 className="text-lg font-bold text-white truncate">{track.title}</h2>
-            <p className="text-xs text-slate-400">{track.artist}</p>
+            <p className="text-xs text-cyber-cyan tracking-wider uppercase font-semibold">
+              {isPlaying ? "TOCANDO AGORA" : "PAUSADO"}
+            </p>
+            <h2 className="text-lg font-bold text-white truncate px-2">{track.title}</h2>
+            <p className="text-xs text-slate-400 truncate px-2">{track.artist}</p>
           </div>
 
           {/* Progress Bar */}
@@ -136,12 +189,12 @@ export default function App() {
             <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-cyber-border">
               <div 
                 className="bg-gradient-to-r from-cyber-cyan to-cyber-neonGreen h-full transition-all duration-300"
-                style={{ width: `${track.progress}%` }}
+                style={{ width: `${progressPercent}%` }}
               />
             </div>
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>01:12</span>
-              <span>03:45</span>
+            <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+              <span>{formatTime(track.progressMs)}</span>
+              <span>{formatTime(track.durationMs)}</span>
             </div>
           </div>
 
@@ -151,7 +204,7 @@ export default function App() {
               <SkipBack className="w-5 h-5" />
             </button>
             <button 
-              onClick={() => setIsPlaying(!isPlaying)}
+              onClick={handlePlayPause}
               className="w-14 h-14 rounded-full bg-cyber-neonGreen text-black flex items-center justify-center font-bold shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:scale-105 transition cursor-pointer"
             >
               {isPlaying ? <Pause className="w-6 h-6 fill-black" /> : <Play className="w-6 h-6 fill-black ml-1" />}
@@ -164,9 +217,11 @@ export default function App() {
       </main>
 
       {/* Footer OS Controls */}
-      <footer className="relative z-10 flex justify-between items-center text-[10px] text-slate-500 border-t border-cyber-border/40 pt-3">
-        <span>STATUS: IN DEVELOPMENT (35%)</span>
-        <span>CONNECTED TO SPOTIFY API</span>
+      <footer className="relative z-10 flex justify-between items-center text-[10px] text-slate-500 border-t border-cyber-border/40 pt-3 font-mono">
+        <span>STATUS: {user ? "AUTHENTICATED" : "IN DEVELOPMENT (35%)"}</span>
+        <span className={user ? "text-cyber-neonGreen" : ""}>
+          {user ? `CONNECTED: ${user.id.toUpperCase()}` : "CONNECTED TO SPOTIFY API"}
+        </span>
       </footer>
 
     </div>
