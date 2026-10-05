@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn, LogOut, User } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn, LogOut, User, Radio } from 'lucide-react';
 import { Vinyl3D } from './components/3d/Vinyl3D.jsx';
 import { 
   redirectToSpotify, 
@@ -16,6 +16,8 @@ export default function App() {
   const [token, setToken] = useState(window.localStorage.getItem('spotify_access_token'));
   const [user, setUser] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [deviceId, setDeviceId] = useState(null);
+  const [player, setPlayer] = useState(null);
   const [track, setTrack] = useState({
     title: "NO TRACK PLAYING",
     artist: "CONNECT & PLAY MUSIC",
@@ -25,39 +27,65 @@ export default function App() {
   });
 
   // Processa Callback e Inicializa Sessão
-// Substiua o useEffect de autenticação no App.jsx por este:
-useEffect(() => {
-  const initAuth = async () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
+  useEffect(() => {
+    const initAuth = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get('code');
 
-    if (code) {
-      console.log("1. Código encontrado na URL:", code);
-      const newToken = await handleAuthCallback(code);
-      
-      if (newToken) {
-        console.log("2. Sucesso! Token obtido:", newToken);
-        setToken(newToken);
-        const profile = await fetchUserProfile(newToken);
-        if (profile) setUser(profile);
-      } else {
-        console.error("3. Falha ao trocar o código pelo token.");
+      if (code) {
+        const newToken = await handleAuthCallback(code);
+        if (newToken) {
+          setToken(newToken);
+          const profile = await fetchUserProfile(newToken);
+          if (profile) setUser(profile);
+        }
+      } else if (token) {
+        const profile = await fetchUserProfile(token);
+        if (profile) {
+          setUser(profile);
+        } else {
+          logoutSpotify();
+        }
       }
-    } else if (token) {
-      const profile = await fetchUserProfile(token);
-      if (profile) {
-        setUser(profile);
-      } else {
-        // Token expirado/inválido
-        logoutSpotify();
-      }
-    }
-  };
+    };
 
-  initAuth();
-}, []);
+    initAuth();
+  }, []);
 
-  // Polling para atualizar o que está tocando a cada 3 segundos
+  // Inicializa o Web Playback SDK
+  useEffect(() => {
+    if (!token) return;
+
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      const spotifyPlayer = new window.Spotify.Player({
+        name: 'Spotify OS Cyberpunk',
+        getOAuthToken: (cb) => { cb(token); },
+        volume: 0.5,
+      });
+
+      spotifyPlayer.addListener('ready', ({ device_id }) => {
+        console.log('Dispositivo Web Player Ativo. ID:', device_id);
+        setDeviceId(device_id);
+      });
+
+      spotifyPlayer.addListener('player_state_changed', (state) => {
+        if (!state) return;
+        setIsPlaying(!state.paused);
+        setTrack({
+          title: state.track_window.current_track.name,
+          artist: state.track_window.current_track.artists.map(a => a.name).join(', '),
+          albumArt: state.track_window.current_track.album.images[0]?.url || null,
+          progressMs: state.position,
+          durationMs: state.duration
+        });
+      });
+
+      spotifyPlayer.connect();
+      setPlayer(spotifyPlayer);
+    };
+  }, [token]);
+
+  // Polling de sincronização remota (caso o SDK não esteja focado)
   useEffect(() => {
     if (!token) return;
 
@@ -80,7 +108,26 @@ useEffect(() => {
     return () => clearInterval(interval);
   }, [token]);
 
-  // Formatação de Tempo (ms -> MM:SS)
+  // Transferir reprodução para o browser
+  const transferPlayback = async () => {
+    if (!deviceId || !token) return;
+    try {
+      await fetch('https://api.spotify.com/v1/me/player', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          device_ids: [deviceId],
+          play: true,
+        }),
+      });
+    } catch (err) {
+      console.error("Erro ao transferir reprodução:", err);
+    }
+  };
+
   const formatTime = (ms) => {
     if (!ms) return '00:00';
     const totalSeconds = Math.floor(ms / 1000);
@@ -90,11 +137,13 @@ useEffect(() => {
   };
 
   const handlePlayPause = async () => {
-    if (token) {
+    if (player) {
+      await player.togglePlay();
+    } else if (token) {
       await togglePlayback(token, isPlaying);
       setIsPlaying(!isPlaying);
     } else {
-      setIsPlaying(!isPlaying); // Fallback local de teste
+      setIsPlaying(!isPlaying);
     }
   };
 
@@ -220,6 +269,17 @@ useEffect(() => {
               <SkipForward className="w-5 h-5" />
             </button>
           </div>
+
+          {/* Botão de Transferir Áudio para este Navegador */}
+          {deviceId && (
+            <button
+              onClick={transferPlayback}
+              className="flex items-center justify-center gap-2 text-xs bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan py-2 px-4 rounded-lg hover:bg-cyber-cyan hover:text-black transition cursor-pointer font-bold"
+            >
+              <Radio className="w-4 h-4" />
+              TRANSFERIR SOM PARA ESTE NAVEGADOR
+            </button>
+          )}
         </div>
       </main>
 
