@@ -1,6 +1,6 @@
 // src/services/spotify.js
 
-const CLIENT_ID = f4ae9203ee034084ab94d5ddbf94067b;
+const CLIENT_ID = "f4ae9203ee034084ab94d5ddbf94067b";
 const REDIRECT_URI = import.meta.env.VITE_SPOTIFY_REDIRECT_URI || window.location.origin;
 
 function generateCodeVerifier(length = 64) {
