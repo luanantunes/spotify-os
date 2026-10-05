@@ -10,7 +10,7 @@ import {
   fetchCurrentlyPlaying, 
   togglePlayback, 
   logoutSpotify 
-} from './services/spotify.js';
+} from './services/spotify';
 
 export default function App() {
   const [token, setToken] = useState(window.localStorage.getItem('spotify_access_token'));
@@ -25,30 +25,37 @@ export default function App() {
   });
 
   // Processa Callback e Inicializa Sessão
-  useEffect(() => {
-    const initAuth = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
+// Substiua o useEffect de autenticação no App.jsx por este:
+useEffect(() => {
+  const initAuth = async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
 
-      let currentToken = token;
-
-      if (code) {
-        currentToken = await handleAuthCallback(code);
-        if (currentToken) setToken(currentToken);
+    if (code) {
+      console.log("1. Código encontrado na URL:", code);
+      const newToken = await handleAuthCallback(code);
+      
+      if (newToken) {
+        console.log("2. Sucesso! Token obtido:", newToken);
+        setToken(newToken);
+        const profile = await fetchUserProfile(newToken);
+        if (profile) setUser(profile);
+      } else {
+        console.error("3. Falha ao trocar o código pelo token.");
       }
-
-      if (currentToken) {
-        const profile = await fetchUserProfile(currentToken);
-        if (profile) {
-          setUser(profile);
-        } else {
-          logoutSpotify(); // Se o token estiver vencido/inválido
-        }
+    } else if (token) {
+      const profile = await fetchUserProfile(token);
+      if (profile) {
+        setUser(profile);
+      } else {
+        // Token expirado/inválido
+        logoutSpotify();
       }
-    };
+    }
+  };
 
-    initAuth();
-  }, []);
+  initAuth();
+}, []);
 
   // Polling para atualizar o que está tocando a cada 3 segundos
   useEffect(() => {
