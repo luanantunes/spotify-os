@@ -1,7 +1,8 @@
 // src/services/spotify.js
 
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b';
-const REDIRECT_URI = window.location.origin;
+// Garante que a URI não tenha barras sobressalentes
+const REDIRECT_URI = window.location.origin.replace(/\/$/, '');
 
 function generateCodeVerifier(length = 64) {
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -41,14 +42,15 @@ export async function redirectToSpotify() {
   window.localStorage.setItem('code_verifier', verifier);
   setCookie('code_verifier', verifier);
 
-  // Escopos completos e atualizados para permissão total
+  // Escopos incluindo 'streaming' para o Web Playback SDK funcionar
   const scopes = [
     'user-read-private',
     'user-read-email',
     'user-read-playback-state',
     'user-modify-playback-state',
     'user-read-currently-playing',
-    'user-read-recently-played'
+    'user-read-recently-played',
+    'streaming'
   ].join(' ');
 
   const params = new URLSearchParams({
