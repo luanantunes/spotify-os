@@ -1,6 +1,5 @@
 // src/services/spotify.js
 
-// Pega das variáveis de ambiente do Vite ou usa a origem atual como Fallback
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
 const REDIRECT_URI = import.meta.env.VITE_SPOTIFY_REDIRECT_URI || window.location.origin;
 
@@ -24,7 +23,6 @@ async function generateCodeChallenge(codeVerifier) {
     .replace(/\//g, '_');
 }
 
-// Auxiliares para salvar/ler Verifier em Cookie de backup
 function setCookie(name, value, minutes = 10) {
   const d = new Date();
   d.setTime(d.getTime() + (minutes * 60 * 1000));
@@ -36,17 +34,15 @@ function getCookie(name) {
   return match ? match[2] : null;
 }
 
-// 1. Redirecionar para o Login
 export async function redirectToSpotify() {
   if (!CLIENT_ID) {
-    alert("Erro: VITE_SPOTIFY_CLIENT_ID não foi definido nas variáveis do Cloudflare/Vite!");
+    alert("Erro: VITE_SPOTIFY_CLIENT_ID não configurado nas variáveis do Cloudflare!");
     return;
   }
 
   const verifier = generateCodeVerifier(64);
   const challenge = await generateCodeChallenge(verifier);
 
-  // Salva no localStorage E nos cookies para ter redundância
   window.localStorage.setItem('code_verifier', verifier);
   setCookie('code_verifier', verifier);
 
@@ -70,14 +66,11 @@ export async function redirectToSpotify() {
   window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
 }
 
-// 2. Trocar Código por Access Token
 export async function handleAuthCallback(code) {
-  // Recupera do localStorage ou do Cookie
   let codeVerifier = window.localStorage.getItem('code_verifier') || getCookie('code_verifier');
 
   if (!codeVerifier) {
-    console.error("Code verifier não encontrado no LocalStorage/Cookies.");
-    alert("Erro de Sessão: Code Verifier ausente. Tente clicar em CONNECT SPOTIFY novamente.");
+    console.error("Verifier ausente.");
     return null;
   }
 
@@ -103,39 +96,72 @@ export async function handleAuthCallback(code) {
       if (data.refresh_token) {
         window.localStorage.setItem('spotify_refresh_token', data.refresh_token);
       }
-      // Limpa os parâmetros da URL
       window.history.replaceState({}, document.title, window.location.pathname);
       return data.access_token;
-    } else {
-      console.error("Erro na resposta do Spotify API:", data);
-      alert(`Erro no Spotify Token: ${data.error_description || data.error}`);
-      return null;
     }
+    return null;
   } catch (err) {
-    console.error("Erro na requisição ao Spotify:", err);
+    console.error("Erro na autenticação:", err);
     return null;
   }
 }
 
-// 3. Buscar Perfil
+// Renovação Automática do Token expirado
+export async function refreshAccessToken() {
+  const refreshToken = window.localStorage.getItem('spotify_refresh_token');
+  if (!refreshToken) return null;
+
+  try {
+    const response = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      }),
+    });
+
+    const data = await response.json();
+    if (data.access_token) {
+      window.localStorage.setItem('spotify_access_token', data.access_token);
+      if (data.refresh_token) {
+        window.localStorage.setItem('spotify_refresh_token', data.refresh_token);
+      }
+      return data.access_token;
+    }
+  } catch (err) {
+    console.error("Erro ao renovar token:", err);
+  }
+  return null;
+}
+
 export async function fetchUserProfile(token) {
   try {
     const res = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (res.status === 401) return null;
+    if (res.status === 401) {
+      const newToken = await refreshAccessToken();
+      if (newToken) return fetchUserProfile(newToken);
+      return null;
+    }
     return await res.json();
   } catch {
     return null;
   }
 }
 
-// 4. Buscar Tocando Agora
 export async function fetchCurrentlyPlaying(token) {
   try {
     const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
       headers: { Authorization: `Bearer ${token}` }
     });
+    if (res.status === 401) {
+      const newToken = await refreshAccessToken();
+      if (newToken) return fetchCurrentlyPlaying(newToken);
+      return null;
+    }
     if (res.status === 204 || res.status > 400) return null;
     return await res.json();
   } catch {
@@ -143,7 +169,6 @@ export async function fetchCurrentlyPlaying(token) {
   }
 }
 
-// 5. Play / Pause
 export async function togglePlayback(token, isPlaying) {
   const endpoint = isPlaying ? 'pause' : 'play';
   try {
@@ -156,7 +181,6 @@ export async function togglePlayback(token, isPlaying) {
   }
 }
 
-// 6. Logout
 export function logoutSpotify() {
   window.localStorage.clear();
   document.cookie = "code_verifier=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
