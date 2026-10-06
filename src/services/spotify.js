@@ -1,5 +1,5 @@
 // Configuração do cliente Spotify
-const CLIENT_ID = '93673cddb61d4a6fa8353f2cffaa633c'.trim();
+const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
 const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev/';
 
 // Lista estrita de escopos suportados
