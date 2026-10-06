@@ -8,12 +8,13 @@ const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev';
 const SCOPES = [
   'user-read-private',
   'user-read-email',
+  'user-top-read', // <--- Novo: permite ler tops artistas e faixas
   'user-read-playback-state',
   'user-modify-playback-state',
   'user-read-currently-playing',
-  'streaming'
+  'playlist-modify-public',
+  'playlist-modify-private'
 ];
-
 /**
  * Redireciona para a página de autorização OAuth 2.0 PKCE do Spotify
  */
@@ -163,4 +164,59 @@ export const logoutSpotify = () => {
   localStorage.removeItem('spotify_refresh_token');
   localStorage.removeItem('spotify_code_verifier');
   window.location.reload();
+};
+
+/**
+ * Busca as faixas mais ouvidas pelo usuário
+ * @param {string} token - Access Token do Spotify
+ * @param {string} timeRange - 'short_term' (4 semanas), 'medium_term' (6 meses), 'long_term' (anos)
+ */
+export const fetchTopTracks = async (token, timeRange = 'medium_term') => {
+  try {
+    const res = await fetch(`https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=10`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items || [];
+  } catch (err) {
+    console.error("Erro ao buscar top tracks:", err);
+    return [];
+  }
+};
+
+/**
+ * Busca os artistas mais ouvidos pelo usuário
+ */
+export const fetchTopArtists = async (token, timeRange = 'medium_term') => {
+  try {
+    const res = await fetch(`https://api.spotify.com/v1/me/top/artists?time_range=${timeRange}&limit=10`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items || [];
+  } catch (err) {
+    console.error("Erro ao buscar top artists:", err);
+    return [];
+  }
+};
+
+/**
+ * Busca os atributos de áudio de uma lista de IDs de faixas
+ */
+export const fetchAudioFeatures = async (token, trackIds) => {
+  if (!trackIds || trackIds.length === 0) return [];
+  try {
+    const ids = trackIds.join(',');
+    const res = await fetch(`https://api.spotify.com/v1/audio-features?ids=${ids}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.audio_features || [];
+  } catch (err) {
+    console.error("Erro ao buscar audio features:", err);
+    return [];
+  }
 };
