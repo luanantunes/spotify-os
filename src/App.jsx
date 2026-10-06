@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn, LogOut, User, Radio } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn, LogOut, User, Radio, AlertTriangle } from 'lucide-react';
 import { Vinyl3D } from './components/3d/Vinyl3D.jsx';
 import { 
   redirectToSpotify, 
@@ -12,7 +12,7 @@ import {
   logoutSpotify 
 } from './services/spotify';
 
-// Define a função global imediatamente para evitar o "onSpotifyWebPlaybackSDKReady is not defined"
+// Registra callback do SDK no escopo global imediatamente
 window.onSpotifyWebPlaybackSDKReady = window.onSpotifyWebPlaybackSDKReady || (() => {});
 
 export default function App() {
@@ -21,7 +21,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [deviceId, setDeviceId] = useState(null);
   const [player, setPlayer] = useState(null);
-  const [sdkError, setSdkError] = useState(null);
+  const [isFreeAccount, setIsFreeAccount] = useState(false);
   const [track, setTrack] = useState({
     title: "NO TRACK PLAYING",
     artist: "CONNECT & PLAY MUSIC",
@@ -30,7 +30,7 @@ export default function App() {
     durationMs: 225000
   });
 
-  // Processa Callback e Autenticação
+  // Processa Callback e Autenticação de Perfil
   useEffect(() => {
     const initAuth = async () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -48,7 +48,6 @@ export default function App() {
         if (profile) {
           setUser(profile);
         } else {
-          // Token inválido/expirado
           logoutSpotify();
           setToken(null);
         }
@@ -58,9 +57,9 @@ export default function App() {
     initAuth();
   }, []);
 
-  // Inicializa o Web Playback SDK com verificação de estado
+  // Inicializa o Web Playback SDK
   useEffect(() => {
-    if (!token) return;
+    if (!token || isFreeAccount) return;
 
     const setupPlayer = () => {
       if (!window.Spotify) return;
@@ -76,22 +75,13 @@ export default function App() {
         setDeviceId(device_id);
       });
 
-      spotifyPlayer.addListener('not_ready', ({ device_id }) => {
-        console.log('Dispositivo offline:', device_id);
-      });
-
-      spotifyPlayer.addListener('initialization_error', ({ message }) => {
-        console.error('Erro de inicialização:', message);
-      });
-
-      spotifyPlayer.addListener('authentication_error', ({ message }) => {
-        console.error('Erro de autenticação no SDK:', message);
-        logoutSpotify();
-      });
-
       spotifyPlayer.addListener('account_error', ({ message }) => {
-        console.error('Erro de conta (Ex: Requer Spotify Premium):', message);
-        setSdkError('Web Playback requer conta Spotify Premium');
+        console.warn('SDK Spotify: Requer conta Premium:', message);
+        setIsFreeAccount(true);
+      });
+
+      spotifyPlayer.addListener('authentication_error', () => {
+        logoutSpotify();
       });
 
       spotifyPlayer.addListener('player_state_changed', (state) => {
@@ -110,18 +100,16 @@ export default function App() {
       setPlayer(spotifyPlayer);
     };
 
-    // Se o script do SDK já carregou na página
     if (window.Spotify) {
       setupPlayer();
     } else {
-      // Registra a callback global para quando o script terminar de carregar
       window.onSpotifyWebPlaybackSDKReady = setupPlayer;
     }
-  }, [token]);
+  }, [token, isFreeAccount]);
 
-  // Polling para sincronização (com interrupção em caso de erro de autorização)
+  // Polling para sincronizar faixa atual com cancelamento em conta Free
   useEffect(() => {
-    if (!token) return;
+    if (!token || isFreeAccount) return;
 
     let isSubscribed = true;
 
@@ -141,24 +129,27 @@ export default function App() {
           });
         }
       } catch (err) {
-        console.error("Erro na sincronização de reprodução:", err);
+        if (err.status === 403 || err.message === 'FORBIDDEN_FREE_ACCOUNT') {
+          console.warn('Conta Spotify Free detectada. Polling de reprodução pausado.');
+          if (isSubscribed) setIsFreeAccount(true);
+        }
       }
     };
 
     updatePlayer();
-    const interval = setInterval(updatePlayer, 4000);
+    const interval = setInterval(updatePlayer, 5000);
 
     return () => {
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [token]);
+  }, [token, isFreeAccount]);
 
-  // Transferir reprodução para este navegador
+  // Transferência de som
   const transferPlayback = async () => {
-    if (!deviceId || !token) return;
+    if (!deviceId || !token || isFreeAccount) return;
     try {
-      const res = await fetch('https://api.spotify.com/v1/me/player', {
+      await fetch('https://api.spotify.com/v1/me/player', {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -169,12 +160,8 @@ export default function App() {
           play: true,
         }),
       });
-
-      if (res.status === 403) {
-        alert("Transferência negada (403): Verifique se sua conta é Premium e se o app no dashboard do Spotify tem as permissões corretas.");
-      }
     } catch (err) {
-      console.error("Erro ao transferir reprodução:", err);
+      console.error("Erro ao transferir áudio:", err);
     }
   };
 
@@ -187,6 +174,8 @@ export default function App() {
   };
 
   const handlePlayPause = async () => {
+    if (isFreeAccount) return;
+
     if (player) {
       await player.togglePlay();
     } else if (token) {
@@ -236,6 +225,11 @@ export default function App() {
                   <User className="w-4 h-4 text-cyber-cyan" />
                 )}
                 <span className="font-semibold text-xs">{user.display_name}</span>
+                {isFreeAccount && (
+                  <span className="bg-amber-500/20 text-amber-400 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 font-mono">
+                    FREE
+                  </span>
+                )}
               </div>
               <button 
                 onClick={logoutSpotify}
@@ -275,9 +269,17 @@ export default function App() {
 
         {/* Player UI Body */}
         <div className="p-6 flex flex-col gap-6">
-          {sdkError && (
-            <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded-lg text-xs text-center font-mono">
-              {sdkError}
+          
+          {/* Alerta de Conta Free */}
+          {isFreeAccount && (
+            <div className="bg-amber-500/10 border border-amber-500/40 text-amber-300 p-4 rounded-xl text-xs flex flex-col gap-2 font-mono">
+              <div className="flex items-center gap-2 font-bold text-amber-400">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>RESTRIÇÃO DE CONTA SPOTIFY FREE</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-200/80">
+                A reprodução via Web SDK é restrita pela API do Spotify a assinantes <strong>Spotify Premium</strong>.
+              </p>
             </div>
           )}
 
@@ -312,22 +314,23 @@ export default function App() {
 
           {/* Controls */}
           <div className="flex items-center justify-center gap-6">
-            <button className="text-slate-400 hover:text-white transition">
+            <button disabled={isFreeAccount} className="text-slate-400 hover:text-white transition disabled:opacity-30 disabled:cursor-not-allowed">
               <SkipBack className="w-5 h-5" />
             </button>
             <button 
               onClick={handlePlayPause}
-              className="w-14 h-14 rounded-full bg-cyber-neonGreen text-black flex items-center justify-center font-bold shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:scale-105 transition cursor-pointer"
+              disabled={isFreeAccount}
+              className="w-14 h-14 rounded-full bg-cyber-neonGreen text-black flex items-center justify-center font-bold shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:scale-105 transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
               {isPlaying ? <Pause className="w-6 h-6 fill-black" /> : <Play className="w-6 h-6 fill-black ml-1" />}
             </button>
-            <button className="text-slate-400 hover:text-white transition">
+            <button disabled={isFreeAccount} className="text-slate-400 hover:text-white transition disabled:opacity-30 disabled:cursor-not-allowed">
               <SkipForward className="w-5 h-5" />
             </button>
           </div>
 
           {/* Botão de Transferir Áudio */}
-          {deviceId && (
+          {deviceId && !isFreeAccount && (
             <button
               onClick={transferPlayback}
               className="flex items-center justify-center gap-2 text-xs bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan py-2 px-4 rounded-lg hover:bg-cyber-cyan hover:text-black transition cursor-pointer font-bold"
@@ -341,7 +344,7 @@ export default function App() {
 
       {/* Footer OS Controls */}
       <footer className="relative z-10 flex justify-between items-center text-[10px] text-slate-500 border-t border-cyber-border/40 pt-3 font-mono">
-        <span>STATUS: {user ? "AUTHENTICATED" : "IN DEVELOPMENT (35%)"}</span>
+        <span>STATUS: {user ? (isFreeAccount ? "AUTHENTICATED (FREE)" : "AUTHENTICATED (PREMIUM)") : "IN DEVELOPMENT (35%)"}</span>
         <span className={user ? "text-cyber-neonGreen" : ""}>
           {user ? `CONNECTED: ${user.id.toUpperCase()}` : "CONNECTED TO SPOTIFY API"}
         </span>
