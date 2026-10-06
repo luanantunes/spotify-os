@@ -12,12 +12,16 @@ import {
   logoutSpotify 
 } from './services/spotify';
 
+// Define a função global imediatamente para evitar o "onSpotifyWebPlaybackSDKReady is not defined"
+window.onSpotifyWebPlaybackSDKReady = window.onSpotifyWebPlaybackSDKReady || (() => {});
+
 export default function App() {
   const [token, setToken] = useState(window.localStorage.getItem('spotify_access_token'));
   const [user, setUser] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [deviceId, setDeviceId] = useState(null);
   const [player, setPlayer] = useState(null);
+  const [sdkError, setSdkError] = useState(null);
   const [track, setTrack] = useState({
     title: "NO TRACK PLAYING",
     artist: "CONNECT & PLAY MUSIC",
@@ -26,7 +30,7 @@ export default function App() {
     durationMs: 225000
   });
 
-  // Processa Callback e Inicializa Sessão
+  // Processa Callback e Autenticação
   useEffect(() => {
     const initAuth = async () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -44,7 +48,9 @@ export default function App() {
         if (profile) {
           setUser(profile);
         } else {
+          // Token inválido/expirado
           logoutSpotify();
+          setToken(null);
         }
       }
     };
@@ -52,11 +58,13 @@ export default function App() {
     initAuth();
   }, []);
 
-  // Inicializa o Web Playback SDK
+  // Inicializa o Web Playback SDK com verificação de estado
   useEffect(() => {
     if (!token) return;
 
-    window.onSpotifyWebPlaybackSDKReady = () => {
+    const setupPlayer = () => {
+      if (!window.Spotify) return;
+
       const spotifyPlayer = new window.Spotify.Player({
         name: 'Spotify OS Cyberpunk',
         getOAuthToken: (cb) => { cb(token); },
@@ -66,6 +74,24 @@ export default function App() {
       spotifyPlayer.addListener('ready', ({ device_id }) => {
         console.log('Dispositivo Web Player Ativo. ID:', device_id);
         setDeviceId(device_id);
+      });
+
+      spotifyPlayer.addListener('not_ready', ({ device_id }) => {
+        console.log('Dispositivo offline:', device_id);
+      });
+
+      spotifyPlayer.addListener('initialization_error', ({ message }) => {
+        console.error('Erro de inicialização:', message);
+      });
+
+      spotifyPlayer.addListener('authentication_error', ({ message }) => {
+        console.error('Erro de autenticação no SDK:', message);
+        logoutSpotify();
+      });
+
+      spotifyPlayer.addListener('account_error', ({ message }) => {
+        console.error('Erro de conta (Ex: Requer Spotify Premium):', message);
+        setSdkError('Web Playback requer conta Spotify Premium');
       });
 
       spotifyPlayer.addListener('player_state_changed', (state) => {
@@ -83,36 +109,56 @@ export default function App() {
       spotifyPlayer.connect();
       setPlayer(spotifyPlayer);
     };
+
+    // Se o script do SDK já carregou na página
+    if (window.Spotify) {
+      setupPlayer();
+    } else {
+      // Registra a callback global para quando o script terminar de carregar
+      window.onSpotifyWebPlaybackSDKReady = setupPlayer;
+    }
   }, [token]);
 
-  // Polling de sincronização remota (caso o SDK não esteja focado)
+  // Polling para sincronização (com interrupção em caso de erro de autorização)
   useEffect(() => {
     if (!token) return;
 
+    let isSubscribed = true;
+
     const updatePlayer = async () => {
-      const data = await fetchCurrentlyPlaying(token);
-      if (data && data.item) {
-        setIsPlaying(data.is_playing);
-        setTrack({
-          title: data.item.name,
-          artist: data.item.artists.map(a => a.name).join(', '),
-          albumArt: data.item.album.images[0]?.url || null,
-          progressMs: data.progress_ms,
-          durationMs: data.item.duration_ms
-        });
+      try {
+        const data = await fetchCurrentlyPlaying(token);
+        if (!isSubscribed) return;
+
+        if (data && data.item) {
+          setIsPlaying(data.is_playing);
+          setTrack({
+            title: data.item.name,
+            artist: data.item.artists.map(a => a.name).join(', '),
+            albumArt: data.item.album.images[0]?.url || null,
+            progressMs: data.progress_ms,
+            durationMs: data.item.duration_ms
+          });
+        }
+      } catch (err) {
+        console.error("Erro na sincronização de reprodução:", err);
       }
     };
 
     updatePlayer();
-    const interval = setInterval(updatePlayer, 3000);
-    return () => clearInterval(interval);
+    const interval = setInterval(updatePlayer, 4000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
   }, [token]);
 
-  // Transferir reprodução para o browser
+  // Transferir reprodução para este navegador
   const transferPlayback = async () => {
     if (!deviceId || !token) return;
     try {
-      await fetch('https://api.spotify.com/v1/me/player', {
+      const res = await fetch('https://api.spotify.com/v1/me/player', {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -123,6 +169,10 @@ export default function App() {
           play: true,
         }),
       });
+
+      if (res.status === 403) {
+        alert("Transferência negada (403): Verifique se sua conta é Premium e se o app no dashboard do Spotify tem as permissões corretas.");
+      }
     } catch (err) {
       console.error("Erro ao transferir reprodução:", err);
     }
@@ -225,7 +275,13 @@ export default function App() {
 
         {/* Player UI Body */}
         <div className="p-6 flex flex-col gap-6">
-          {/* Capa do Álbum ou Áudio Ativo */}
+          {sdkError && (
+            <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded-lg text-xs text-center font-mono">
+              {sdkError}
+            </div>
+          )}
+
+          {/* Capa do Álbum */}
           {track.albumArt && (
             <div className="w-24 h-24 mx-auto rounded-lg overflow-hidden border border-cyber-border shadow-[0_0_20px_rgba(0,240,255,0.2)]">
               <img src={track.albumArt} alt="Album Art" className="w-full h-full object-cover" />
@@ -270,7 +326,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* Botão de Transferir Áudio para este Navegador */}
+          {/* Botão de Transferir Áudio */}
           {deviceId && (
             <button
               onClick={transferPlayback}

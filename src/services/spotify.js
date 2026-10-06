@@ -171,7 +171,7 @@ export async function togglePlayback(token, isPlaying) {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` }
     });
-  } catch (err) {
+  } catch (err) { 
     console.error("Erro ao alterar reprodução:", err);
   }
 }
