@@ -2,7 +2,7 @@
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
 const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev/';
 
-// Lista estrita de escopos sem espaços ou quebras de linha
+// Escopos necessários
 const SCOPES = [
   'user-read-private',
   'user-read-email',
@@ -17,30 +17,45 @@ const SCOPES = [
  */
 export const redirectToSpotify = async () => {
   try {
-    const verifier = generateRandomString(128);
-    const challenge = await generateCodeChallenge(verifier);
+    // 1. Gera o Code Verifier
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const values = crypto.getRandomValues(new Uint8Array(128));
+    const verifier = Array.from(values).map((x) => possible[x % possible.length]).join('');
 
+    // 2. Gera o Code Challenge (SHA-256 + Base64URL)
+    const data = new TextEncoder().encode(verifier);
+    const digest = await window.crypto.subtle.digest('SHA-256', data);
+    const bytes = new Uint8Array(digest);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const challenge = btoa(binary)
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+
+    // 3. Salva o verifier no localStorage
     localStorage.setItem('spotify_code_verifier', verifier);
 
-    // Formata os escopos separando exatamente por espaço simples
-    const scopeString = SCOPES.join(' ').trim();
-
+    // 4. Monta os parâmetros da URL
     const params = new URLSearchParams();
     params.append('client_id', CLIENT_ID);
     params.append('response_type', 'code');
     params.append('redirect_uri', REDIRECT_URI);
-    params.append('scope', scopeString);
+    params.append('scope', SCOPES.join(' '));
     params.append('code_challenge_method', 'S256');
     params.append('code_challenge', challenge);
 
+    // 5. Redireciona
     window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
   } catch (err) {
-    console.error("Erro no PKCE:", err);
+    console.error("Erro no fluxo PKCE:", err);
   }
 };
 
 /**
- * Troca o código temporário recebido na URL pelo Access Token
+ * Processa a troca do código de autorização pelo Access Token
  */
 export const handleAuthCallback = async (code) => {
   const verifier = localStorage.getItem('spotify_code_verifier');
@@ -50,13 +65,12 @@ export const handleAuthCallback = async (code) => {
     return null;
   }
 
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    grant_type: 'authorization_code',
-    code,
-    redirect_uri: REDIRECT_URI,
-    code_verifier: verifier,
-  });
+  const params = new URLSearchParams();
+  params.append('client_id', CLIENT_ID);
+  params.append('grant_type', 'authorization_code');
+  params.append('code', code);
+  params.append('redirect_uri', REDIRECT_URI);
+  params.append('code_verifier', verifier);
 
   try {
     const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -76,12 +90,10 @@ export const handleAuthCallback = async (code) => {
       }
       window.history.replaceState({}, document.title, window.location.pathname);
       return data.access_token;
-    } else {
-      console.error('Erro na resposta do token:', data);
-      return null;
     }
+    return null;
   } catch (err) {
-    console.error('Falha na troca de token:', err);
+    console.error('Erro ao trocar token:', err);
     return null;
   }
 };
@@ -91,38 +103,33 @@ export const handleAuthCallback = async (code) => {
  */
 export const fetchUserProfile = async (token) => {
   try {
-    const response = await fetch('https://api.spotify.com/v1/me', {
+    const res = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (response.status === 401 || response.status === 403) return null;
-    return await response.json();
+    if (res.status === 401 || res.status === 403) return null;
+    return await res.json();
   } catch (err) {
     return null;
   }
 };
 
 /**
- * Busca estado de reprodução atual de forma resiliente
+ * Busca faixa atual
  */
 export const fetchCurrentlyPlaying = async (token) => {
   try {
-    const response = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+    const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
       headers: { Authorization: `Bearer ${token}` }
     });
-
-    if (response.status === 403) {
+    if (res.status === 403) {
       const err = new Error('FORBIDDEN_FREE_ACCOUNT');
       err.status = 403;
       throw err;
     }
-
-    if (response.status === 204 || response.status === 401) return null;
-
-    return await response.json();
+    if (res.status === 204 || res.status === 401) return null;
+    return await res.json();
   } catch (err) {
-    if (err.status === 403 || err.message === 'FORBIDDEN_FREE_ACCOUNT') {
-      throw err;
-    }
+    if (err.status === 403 || err.message === 'FORBIDDEN_FREE_ACCOUNT') throw err;
     return null;
   }
 };
