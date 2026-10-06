@@ -15,25 +15,26 @@ const SCOPES = [
 /**
  * Gera uma string aleatória para o PKCE Code Verifier
  */
+/**
+ * Gera uma string aleatória para o PKCE Code Verifier
+ */
 function generateRandomString(length) {
-  let text = '';
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < length; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return values.reduce((acc, x) => acc + possible[x % possible.length], '');
 }
 
 /**
- * Gera o Code Challenge a partir do Verifier usando SHA-256
+ * Gera o Code Challenge a partir do Verifier usando SHA-256 de forma segura (Base64URL)
  */
 async function generateCodeChallenge(codeVerifier) {
   const data = new TextEncoder().encode(codeVerifier);
   const digest = await window.crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode.apply(null, new Uint8Array(digest)))
+  
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/=/g, '')
     .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+    .replace(/\//g, '_');
 }
 
 /**
