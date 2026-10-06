@@ -1,8 +1,10 @@
 // Configuração do cliente Spotify
+// Configuração do cliente Spotify
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
-const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev/';
+// Tente sem a barra no final primeiro caso no dashboard esteja sem barra
+const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev'; 
 
-// Escopos necessários
+// Escopos estritos
 const SCOPES = [
   'user-read-private',
   'user-read-email',
@@ -35,20 +37,24 @@ export const redirectToSpotify = async () => {
       .replace(/\+/g, '-')
       .replace(/\//g, '_');
 
-    // 3. Salva o verifier no localStorage
+    // 3. Salva no localStorage
     localStorage.setItem('spotify_code_verifier', verifier);
 
-    // 4. Monta os parâmetros da URL
-    const params = new URLSearchParams();
-    params.append('client_id', CLIENT_ID);
-    params.append('response_type', 'code');
-    params.append('redirect_uri', REDIRECT_URI);
-    params.append('scope', SCOPES.join(' '));
-    params.append('code_challenge_method', 'S256');
-    params.append('code_challenge', challenge);
+    // 4. Monta a URL manualmente garantindo %20 nos espaços do scope
+    const scopeEncoded = SCOPES.join('%20');
+    const redirectEncoded = encodeURIComponent(REDIRECT_URI);
+    
+    const authUrl = `https://accounts.spotify.com/authorize?` +
+      `client_id=${CLIENT_ID}` +
+      `&response_type=code` +
+      `&redirect_uri=${redirectEncoded}` +
+      `&scope=${scopeEncoded}` +
+      `&code_challenge_method=S256` +
+      `&code_challenge=${challenge}`;
 
-    // 5. Redireciona
-    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+    console.log("URL de Autorização gerada:", authUrl);
+    window.location.href = authUrl;
+
   } catch (err) {
     console.error("Erro no fluxo PKCE:", err);
   }
