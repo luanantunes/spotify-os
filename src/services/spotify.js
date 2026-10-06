@@ -2,7 +2,7 @@
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
 const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev/';
 
-// Lista estrita de escopos suportados
+// Lista estrita de escopos sem espaços ou quebras de linha
 const SCOPES = [
   'user-read-private',
   'user-read-email',
@@ -11,29 +11,6 @@ const SCOPES = [
   'user-read-currently-playing',
   'streaming'
 ];
-
-/**
- * Gera string aleatória para o Code Verifier do PKCE
- */
-function generateRandomString(length) {
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const values = crypto.getRandomValues(new Uint8Array(length));
-  return Array.from(values).map((x) => possible[x % possible.length]).join('');
-}
-
-/**
- * Gera o Code Challenge em formato Base64URL sem padding (=)
- */
-async function generateCodeChallenge(codeVerifier) {
-  const data = new TextEncoder().encode(codeVerifier);
-  const digest = await window.crypto.subtle.digest('SHA-256', data);
-  
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
-  return base64
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-}
 
 /**
  * Redireciona para a página de autorização OAuth 2.0 PKCE do Spotify
@@ -45,21 +22,20 @@ export const redirectToSpotify = async () => {
 
     localStorage.setItem('spotify_code_verifier', verifier);
 
-    const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: REDIRECT_URI,
-      scope: SCOPES.join(' '),
-      code_challenge_method: 'S256',
-      code_challenge: challenge,
-    });
+    // Formata os escopos separando exatamente por espaço simples
+    const scopeString = SCOPES.join(' ').trim();
 
-    const targetUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
-    console.log("Redirecionando para Spotify Auth:", targetUrl);
+    const params = new URLSearchParams();
+    params.append('client_id', CLIENT_ID);
+    params.append('response_type', 'code');
+    params.append('redirect_uri', REDIRECT_URI);
+    params.append('scope', scopeString);
+    params.append('code_challenge_method', 'S256');
+    params.append('code_challenge', challenge);
 
-    window.location.href = targetUrl;
+    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
   } catch (err) {
-    console.error("Erro ao gerar requisição PKCE:", err);
+    console.error("Erro no PKCE:", err);
   }
 };
 
