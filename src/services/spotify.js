@@ -2,17 +2,13 @@
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
 const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev'; 
 
-// Escopos necessários para leitura e controle de player
+// Escopos estritos
 const SCOPES = [
   'user-read-private',
   'user-read-email',
   'user-top-read',
   'user-read-playback-state',
-  'user-modify-playback-state',
-  'user-read-currently-playing',
-  'streaming',
-  'playlist-modify-public',
-  'playlist-modify-private'
+  'user-read-currently-playing'
 ];
 
 /**
@@ -100,7 +96,7 @@ export const handleAuthCallback = async (code) => {
 };
 
 /**
- * Busca perfil do usuário
+ * Busca o perfil do usuário
  */
 export const fetchUserProfile = async (token) => {
   try {
@@ -115,42 +111,36 @@ export const fetchUserProfile = async (token) => {
 };
 
 /**
- * Busca a faixa em execução no momento
+ * Busca as faixas mais ouvidas pelo usuário
  */
-export const fetchCurrentlyPlaying = async (token) => {
+export const fetchTopTracks = async (token, timeRange = 'medium_term') => {
   try {
-    const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+    const res = await fetch(`https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=10`, {
       headers: { Authorization: `Bearer ${token}` }
     });
-
-    if (res.status === 204 || res.status === 404) return null;
-    if (res.status === 403) {
-      const error = new Error('FORBIDDEN_FREE_ACCOUNT');
-      error.status = 403;
-      throw error;
-    }
-
-    if (!res.ok) return null;
-    return await res.json();
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items || [];
   } catch (err) {
-    if (err.status === 403) throw err;
-    console.error("Erro ao buscar reprodução atual:", err);
-    return null;
+    console.error("Erro ao buscar top tracks:", err);
+    return [];
   }
 };
 
 /**
- * Alterna Play/Pause na Web API do Spotify
+ * Busca os artistas mais ouvidos pelo usuário
  */
-export const togglePlayback = async (token, isPlaying) => {
-  const endpoint = isPlaying ? 'pause' : 'play';
+export const fetchTopArtists = async (token, timeRange = 'medium_term') => {
   try {
-    await fetch(`https://api.spotify.com/v1/me/player/${endpoint}`, {
-      method: 'PUT',
+    const res = await fetch(`https://api.spotify.com/v1/me/top/artists?time_range=${timeRange}&limit=10`, {
       headers: { Authorization: `Bearer ${token}` }
     });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items || [];
   } catch (err) {
-    console.error(`Erro ao alternar para ${endpoint}:`, err);
+    console.error("Erro ao buscar top artists:", err);
+    return [];
   }
 };
 
