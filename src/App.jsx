@@ -1,353 +1,232 @@
 import React, { useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import { Play, Pause, SkipForward, SkipBack, Music, Terminal, LogIn, LogOut, User, Radio, AlertTriangle } from 'lucide-react';
-import { Vinyl3D } from './components/3d/Vinyl3D.jsx';
+import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
+import { Sparkles, Music, BarChart3, Radio, LogIn, LogOut, User, Activity, Zap } from 'lucide-react';
+import { HighTicketBackground } from './components/3d/HighTicketBackground.jsx';
 import { 
   redirectToSpotify, 
   handleAuthCallback, 
   fetchUserProfile, 
-  fetchCurrentlyPlaying, 
-  togglePlayback, 
+  fetchTopTracks, 
+  fetchTopArtists, 
   logoutSpotify 
 } from './services/spotify';
 
-// Registra callback do SDK no escopo global imediatamente
-window.onSpotifyWebPlaybackSDKReady = window.onSpotifyWebPlaybackSDKReady || (() => {});
-
 export default function App() {
-  const [token, setToken] = useState(window.localStorage.getItem('spotify_access_token'));
+  const [token, setToken] = useState(localStorage.getItem('spotify_access_token'));
   const [user, setUser] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [deviceId, setDeviceId] = useState(null);
-  const [player, setPlayer] = useState(null);
-  const [isFreeAccount, setIsFreeAccount] = useState(false);
-  const [track, setTrack] = useState({
-    title: "NO TRACK PLAYING",
-    artist: "CONNECT & PLAY MUSIC",
-    albumArt: null,
-    progressMs: 0,
-    durationMs: 225000
-  });
+  const [topTracks, setTopTracks] = useState([]);
+  const [topArtists, setTopArtists] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Processa Callback e Autenticação de Perfil
   useEffect(() => {
     const initAuth = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        
+        let currentToken = localStorage.getItem('spotify_access_token');
 
-      if (code) {
-        const newToken = await handleAuthCallback(code);
-        if (newToken) {
-          setToken(newToken);
-          const profile = await fetchUserProfile(newToken);
-          if (profile) setUser(profile);
+        if (code && !currentToken) {
+          currentToken = await handleAuthCallback(code);
         }
-      } else if (token) {
-        const profile = await fetchUserProfile(token);
-        if (profile) {
-          setUser(profile);
-        } else {
-          logoutSpotify();
-          setToken(null);
+
+        if (currentToken) {
+          setToken(currentToken);
+          const profile = await fetchUserProfile(currentToken);
+          if (profile) {
+            setUser(profile);
+            const tracks = await fetchTopTracks(currentToken, 'medium_term');
+            const artists = await fetchTopArtists(currentToken, 'medium_term');
+            setTopTracks(tracks);
+            setTopArtists(artists);
+          } else {
+            logoutSpotify();
+          }
         }
+      } catch (err) {
+        console.error("Erro no Auth:", err);
+      } finally {
+        setLoading(false);
       }
     };
 
     initAuth();
   }, []);
 
-  // Inicializa o Web Playback SDK
-  useEffect(() => {
-    if (!token || isFreeAccount) return;
-
-    const setupPlayer = () => {
-      if (!window.Spotify) return;
-
-      const spotifyPlayer = new window.Spotify.Player({
-        name: 'Spotify OS Cyberpunk',
-        getOAuthToken: (cb) => { cb(token); },
-        volume: 0.5,
-      });
-
-      spotifyPlayer.addListener('ready', ({ device_id }) => {
-        console.log('Dispositivo Web Player Ativo. ID:', device_id);
-        setDeviceId(device_id);
-      });
-
-      spotifyPlayer.addListener('account_error', ({ message }) => {
-        console.warn('SDK Spotify: Requer conta Premium:', message);
-        setIsFreeAccount(true);
-      });
-
-      spotifyPlayer.addListener('authentication_error', () => {
-        logoutSpotify();
-      });
-
-      spotifyPlayer.addListener('player_state_changed', (state) => {
-        if (!state) return;
-        setIsPlaying(!state.paused);
-        setTrack({
-          title: state.track_window.current_track.name,
-          artist: state.track_window.current_track.artists.map(a => a.name).join(', '),
-          albumArt: state.track_window.current_track.album.images[0]?.url || null,
-          progressMs: state.position,
-          durationMs: state.duration
-        });
-      });
-
-      spotifyPlayer.connect();
-      setPlayer(spotifyPlayer);
-    };
-
-    if (window.Spotify) {
-      setupPlayer();
-    } else {
-      window.onSpotifyWebPlaybackSDKReady = setupPlayer;
-    }
-  }, [token, isFreeAccount]);
-
-  // Polling para sincronizar faixa atual com cancelamento em conta Free
-  useEffect(() => {
-    if (!token || isFreeAccount) return;
-
-    let isSubscribed = true;
-
-    const updatePlayer = async () => {
-      try {
-        const data = await fetchCurrentlyPlaying(token);
-        if (!isSubscribed) return;
-
-        if (data && data.item) {
-          setIsPlaying(data.is_playing);
-          setTrack({
-            title: data.item.name,
-            artist: data.item.artists.map(a => a.name).join(', '),
-            albumArt: data.item.album.images[0]?.url || null,
-            progressMs: data.progress_ms,
-            durationMs: data.item.duration_ms
-          });
-        }
-      } catch (err) {
-        if (err.status === 403 || err.message === 'FORBIDDEN_FREE_ACCOUNT') {
-          console.warn('Conta Spotify Free detectada. Polling de reprodução pausado.');
-          if (isSubscribed) setIsFreeAccount(true);
-        }
-      }
-    };
-
-    updatePlayer();
-    const interval = setInterval(updatePlayer, 5000);
-
-    return () => {
-      isSubscribed = false;
-      clearInterval(interval);
-    };
-  }, [token, isFreeAccount]);
-
-  // Transferência de som
-  const transferPlayback = async () => {
-    if (!deviceId || !token || isFreeAccount) return;
-    try {
-      await fetch('https://api.spotify.com/v1/me/player', {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          device_ids: [deviceId],
-          play: true,
-        }),
-      });
-    } catch (err) {
-      console.error("Erro ao transferir áudio:", err);
-    }
-  };
-
-  const formatTime = (ms) => {
-    if (!ms) return '00:00';
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  const handlePlayPause = async () => {
-    if (isFreeAccount) return;
-
-    if (player) {
-      await player.togglePlay();
-    } else if (token) {
-      await togglePlayback(token, isPlaying);
-      setIsPlaying(!isPlaying);
-    } else {
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  const progressPercent = track.durationMs ? (track.progressMs / track.durationMs) * 100 : 0;
+  if (loading) {
+    return (
+      <div className="w-screen h-screen bg-[#06080d] text-[#10b981] flex items-center justify-center font-sans tracking-widest text-sm">
+        <Activity className="w-5 h-5 animate-spin mr-3 text-[#10b981]" />
+        CARREGANDO SPOTIFY OS...
+      </div>
+    );
+  }
 
   return (
-    <div className="relative w-screen h-screen bg-cyber-bg select-none overflow-hidden flex flex-col justify-between p-6">
+    <div className="relative w-screen min-h-screen bg-[#06080d] text-slate-100 font-sans select-none overflow-x-hidden flex flex-col justify-between">
       
-      {/* Background 3D Canvas */}
-      <div className="absolute inset-0 z-0">
+      {/* Dynamic Ambient Background Glows */}
+      <div className="fixed top-[-10%] left-[20%] w-[500px] h-[500px] bg-[#10b981]/15 rounded-full blur-[120px] pointer-events-none" />
+      <div className="fixed bottom-[-10%] right-[20%] w-[500px] h-[500px] bg-[#00f0ff]/10 rounded-full blur-[140px] pointer-events-none" />
+
+      {/* 3D Canvas Background */}
+      <div className="fixed inset-0 z-0 pointer-events-none opacity-80">
         <Canvas>
-          <PerspectiveCamera makeDefault position={[0, 0, 6]} />
-          <ambientLight intensity={0.5} />
-          <pointLight position={[10, 10, 10]} color="#00ff66" intensity={1.5} />
-          <pointLight position={[-10, -10, -10]} color="#00f0ff" intensity={1.5} />
-          <Vinyl3D isPlaying={isPlaying} />
-          <OrbitControls enablePan={false} enableZoom={false} />
+          <PerspectiveCamera makeDefault position={[0, 0, 5]} />
+          <HighTicketBackground />
+          <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.5} />
         </Canvas>
       </div>
 
-      {/* Grid Cyberpunk Overlay */}
-      <div className="absolute inset-0 z-0 pointer-events-none bg-[linear-gradient(to_right,#1e293b15_1px,transparent_1px),linear-gradient(to_bottom,#1e293b15_1px,transparent_1px)] bg-[size:4rem_4rem]" />
-
-      {/* Top OS Header Bar */}
-      <header className="relative z-10 flex items-center justify-between border-b border-cyber-border/60 pb-4 bg-cyber-card/40 backdrop-blur-md p-4 rounded-xl">
+      {/* Modern High-Ticket Header */}
+      <header className="relative z-10 w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Terminal className="text-cyber-neonGreen w-5 h-5" />
-          <span className="text-xs tracking-widest text-cyber-neonGreen uppercase font-bold">
-            SPOTIFY_OS // v0.9.2
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#10b981] to-[#00f0ff] p-[1px]">
+            <div className="w-full h-full bg-[#0b0f19] rounded-[11px] flex items-center justify-center">
+              <Zap className="w-5 h-5 text-[#10b981]" />
+            </div>
+          </div>
+          <span className="font-extrabold text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+            SPOTIFY<span className="text-[#10b981]">OS</span>
           </span>
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
+        <div>
           {user ? (
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-black/50 border border-cyber-border px-3 py-1.5 rounded-lg text-slate-200">
-                {user.images?.[0]?.url ? (
-                  <img src={user.images[0].url} alt="Profile" className="w-5 h-5 rounded-full object-cover" />
-                ) : (
-                  <User className="w-4 h-4 text-cyber-cyan" />
-                )}
-                <span className="font-semibold text-xs">{user.display_name}</span>
-                {isFreeAccount && (
-                  <span className="bg-amber-500/20 text-amber-400 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 font-mono">
-                    FREE
-                  </span>
-                )}
-              </div>
+            <div className="flex items-center gap-4 bg-white/5 backdrop-blur-md border border-white/10 px-4 py-2 rounded-full shadow-2xl">
+              {user.images?.[0]?.url ? (
+                <img src={user.images[0].url} alt="User" className="w-7 h-7 rounded-full object-cover border border-[#10b981]" />
+              ) : (
+                <User className="w-5 h-5 text-[#10b981]" />
+              )}
+              <span className="text-xs font-semibold text-slate-200">{user.display_name}</span>
               <button 
                 onClick={logoutSpotify}
-                className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/40 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-500 hover:text-white transition cursor-pointer font-semibold"
+                className="text-slate-400 hover:text-red-400 transition cursor-pointer ml-2"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                LOGOUT
+                <LogOut className="w-4 h-4" />
               </button>
             </div>
           ) : (
-            <button 
+            <button
               onClick={redirectToSpotify}
-              className="flex items-center gap-2 bg-cyber-neonGreen/10 border border-cyber-neonGreen text-cyber-neonGreen px-3 py-1.5 rounded-lg hover:bg-cyber-neonGreen hover:text-black transition cursor-pointer font-semibold shadow-[0_0_15px_rgba(0,255,102,0.2)]"
+              className="group relative inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-[#10b981] to-[#059669] text-slate-950 font-bold text-xs tracking-wider uppercase transition-all duration-300 hover:shadow-[0_0_25px_rgba(16,185,129,0.4)] hover:scale-105 cursor-pointer"
             >
               <LogIn className="w-4 h-4" />
-              CONNECT SPOTIFY
+              Conectar Spotify
             </button>
           )}
         </div>
       </header>
 
-      {/* Main App Window (.exe style) */}
-      <main className="relative z-10 w-full max-w-md mx-auto my-auto bg-cyber-card/80 backdrop-blur-xl border border-cyber-border rounded-2xl shadow-[0_0_50px_rgba(0,255,102,0.1)] overflow-hidden">
-        
-        {/* Titlebar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-slate-900/90 border-b border-cyber-border text-xs text-slate-400">
-          <div className="flex items-center gap-2">
-            <Music className="w-4 h-4 text-cyber-cyan" />
-            <span>PROJECT_2.exe - PLAYER</span>
-          </div>
-          <div className="flex gap-1.5">
-            <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-            <div className="w-3 h-3 rounded-full bg-green-500/80" />
-            <div className="w-3 h-3 rounded-full bg-red-500/80" />
-          </div>
-        </div>
-
-        {/* Player UI Body */}
-        <div className="p-6 flex flex-col gap-6">
-          
-          {/* Alerta de Conta Free */}
-          {isFreeAccount && (
-            <div className="bg-amber-500/10 border border-amber-500/40 text-amber-300 p-4 rounded-xl text-xs flex flex-col gap-2 font-mono">
-              <div className="flex items-center gap-2 font-bold text-amber-400">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>RESTRIÇÃO DE CONTA SPOTIFY FREE</span>
-              </div>
-              <p className="text-[11px] leading-relaxed text-amber-200/80">
-                A reprodução via Web SDK é restrita pela API do Spotify a assinantes <strong>Spotify Premium</strong>.
-              </p>
+      {/* Main Hero & Content Section */}
+      <main className="relative z-10 w-full max-w-5xl mx-auto px-6 py-12 my-auto">
+        {!token ? (
+          /* Landing Hero State (High Ticket) */
+          <div className="text-center space-y-8 py-10">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-md text-xs font-medium text-[#10b981]">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Plataforma Next-Gen de Analytics Musical</span>
             </div>
-          )}
 
-          {/* Capa do Álbum */}
-          {track.albumArt && (
-            <div className="w-24 h-24 mx-auto rounded-lg overflow-hidden border border-cyber-border shadow-[0_0_20px_rgba(0,240,255,0.2)]">
-              <img src={track.albumArt} alt="Album Art" className="w-full h-full object-cover" />
-            </div>
-          )}
+            <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-white leading-tight">
+              Sua música em uma <br />
+              <span className="bg-gradient-to-r from-[#10b981] via-[#00f0ff] to-emerald-400 bg-clip-text text-transparent">
+                nova dimensão visual.
+              </span>
+            </h1>
 
-          <div className="text-center space-y-1">
-            <p className="text-xs text-cyber-cyan tracking-wider uppercase font-semibold">
-              {isPlaying ? "TOCANDO AGORA" : "PAUSADO"}
+            <p className="max-w-xl mx-auto text-slate-400 text-base md:text-lg font-normal leading-relaxed">
+              Explore suas estatísticas de reprodução, artistas preferidos e métricas de áudio com inteligência visual e design imersivo em 3D.
             </p>
-            <h2 className="text-lg font-bold text-white truncate px-2">{track.title}</h2>
-            <p className="text-xs text-slate-400 truncate px-2">{track.artist}</p>
-          </div>
 
-          {/* Progress Bar */}
-          <div className="space-y-1">
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-cyber-border">
-              <div 
-                className="bg-gradient-to-r from-cyber-cyan to-cyber-neonGreen h-full transition-all duration-300"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-            <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-              <span>{formatTime(track.progressMs)}</span>
-              <span>{formatTime(track.durationMs)}</span>
+            <div className="pt-4">
+              <button
+                onClick={redirectToSpotify}
+                className="px-8 py-4 rounded-full bg-gradient-to-r from-[#10b981] to-[#00f0ff] text-slate-950 font-extrabold text-sm tracking-wider uppercase transition-all duration-300 hover:shadow-[0_0_35px_rgba(16,185,129,0.5)] hover:scale-105 cursor-pointer"
+              >
+                Acessar meu Dashboard
+              </button>
             </div>
           </div>
+        ) : (
+          /* Authenticated Dashboard View (Clean SaaS) */
+          <div className="space-y-10">
+            
+            <div className="flex items-center justify-between border-b border-white/10 pb-6">
+              <div>
+                <h1 className="text-3xl font-extrabold text-white tracking-tight">Dashboard Overview</h1>
+                <p className="text-xs text-slate-400 mt-1">Análise de dados dos últimos 6 meses</p>
+              </div>
+              <div className="flex items-center gap-2 text-xs bg-emerald-500/10 border border-emerald-500/20 text-[#10b981] px-3 py-1.5 rounded-full">
+                <Radio className="w-3.5 h-3.5 animate-pulse" />
+                Sessão Ativa
+              </div>
+            </div>
 
-          {/* Controls */}
-          <div className="flex items-center justify-center gap-6">
-            <button disabled={isFreeAccount} className="text-slate-400 hover:text-white transition disabled:opacity-30 disabled:cursor-not-allowed">
-              <SkipBack className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={handlePlayPause}
-              disabled={isFreeAccount}
-              className="w-14 h-14 rounded-full bg-cyber-neonGreen text-black flex items-center justify-center font-bold shadow-[0_0_20px_rgba(0,255,102,0.4)] hover:scale-105 transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:scale-100"
-            >
-              {isPlaying ? <Pause className="w-6 h-6 fill-black" /> : <Play className="w-6 h-6 fill-black ml-1" />}
-            </button>
-            <button disabled={isFreeAccount} className="text-slate-400 hover:text-white transition disabled:opacity-30 disabled:cursor-not-allowed">
-              <SkipForward className="w-5 h-5" />
-            </button>
+            {/* Grid de Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              
+              {/* Card Top Tracks */}
+              <div className="bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-2xl space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-[#10b981]/10 text-[#10b981]">
+                    <Music className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-bold text-lg text-white">Top 10 Músicas</h3>
+                </div>
+
+                <div className="space-y-3">
+                  {topTracks.map((track, idx) => (
+                    <div key={track.id} className="flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 transition border border-transparent hover:border-white/5">
+                      <span className="text-xs font-mono font-bold text-slate-500 w-4">{idx + 1}</span>
+                      {track.album?.images?.[0]?.url && (
+                        <img src={track.album.images[0].url} alt="Cover" className="w-10 h-10 rounded-xl object-cover" />
+                      )}
+                      <div className="overflow-hidden">
+                        <p className="text-sm font-semibold text-white truncate">{track.name}</p>
+                        <p className="text-xs text-slate-400 truncate">{track.artists.map(a => a.name).join(', ')}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Card Top Artists */}
+              <div className="bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-2xl space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-[#00f0ff]/10 text-[#00f0ff]">
+                    <BarChart3 className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-bold text-lg text-white">Top 10 Artistas</h3>
+                </div>
+
+                <div className="space-y-3">
+                  {topArtists.map((artist, idx) => (
+                    <div key={artist.id} className="flex items-center gap-4 p-3 rounded-2xl hover:bg-white/5 transition border border-transparent hover:border-white/5">
+                      <span className="text-xs font-mono font-bold text-slate-500 w-4">{idx + 1}</span>
+                      {artist.images?.[0]?.url && (
+                        <img src={artist.images[0].url} alt="Artist" className="w-10 h-10 rounded-full object-cover" />
+                      )}
+                      <div className="overflow-hidden">
+                        <p className="text-sm font-semibold text-white truncate">{artist.name}</p>
+                        <p className="text-xs text-slate-400 capitalize">{artist.genres?.slice(0, 2).join(' • ') || 'Artist'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
           </div>
-
-          {/* Botão de Transferir Áudio */}
-          {deviceId && !isFreeAccount && (
-            <button
-              onClick={transferPlayback}
-              className="flex items-center justify-center gap-2 text-xs bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan py-2 px-4 rounded-lg hover:bg-cyber-cyan hover:text-black transition cursor-pointer font-bold"
-            >
-              <Radio className="w-4 h-4" />
-              TRANSFERIR SOM PARA ESTE NAVEGADOR
-            </button>
-          )}
-        </div>
+        )}
       </main>
 
-      {/* Footer OS Controls */}
-      <footer className="relative z-10 flex justify-between items-center text-[10px] text-slate-500 border-t border-cyber-border/40 pt-3 font-mono">
-        <span>STATUS: {user ? (isFreeAccount ? "AUTHENTICATED (FREE)" : "AUTHENTICATED (PREMIUM)") : "IN DEVELOPMENT (35%)"}</span>
-        <span className={user ? "text-cyber-neonGreen" : ""}>
-          {user ? `CONNECTED: ${user.id.toUpperCase()}` : "CONNECTED TO SPOTIFY API"}
-        </span>
+      {/* Clean Footer */}
+      <footer className="relative z-10 w-full max-w-7xl mx-auto px-6 py-6 text-center text-xs text-slate-500 font-medium">
+        SPOTIFY OS © {new Date().getFullYear()} — Engineered with React, Three.js & Spotify Web API
       </footer>
 
     </div>
