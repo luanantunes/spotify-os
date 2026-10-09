@@ -24,10 +24,10 @@ export default function App() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
-        
+
         let currentToken = localStorage.getItem('spotify_access_token');
 
-        if (code && !currentToken) {
+        if (code) {
           currentToken = await handleAuthCallback(code);
         }
 
@@ -41,7 +41,9 @@ export default function App() {
             setTopTracks(tracks);
             setTopArtists(artists);
           } else {
-            logoutSpotify();
+            // Se o token for inválido/expirado, limpa e recarrega limpo
+            localStorage.removeItem('spotify_access_token');
+            setToken(null);
           }
         }
       } catch (err) {

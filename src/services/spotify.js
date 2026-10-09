@@ -1,8 +1,6 @@
-// Configuração do cliente Spotify
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
 const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev'; 
 
-// Escopos estritos
 const SCOPES = [
   'user-read-private',
   'user-read-email',
@@ -11,9 +9,6 @@ const SCOPES = [
   'user-read-currently-playing'
 ];
 
-/**
- * Redireciona para a página de autorização OAuth 2.0 PKCE do Spotify
- */
 export const redirectToSpotify = async () => {
   try {
     const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -51,11 +46,11 @@ export const redirectToSpotify = async () => {
   }
 };
 
-/**
- * Processa a troca do código de autorização pelo Access Token
- */
 export const handleAuthCallback = async (code) => {
   const verifier = localStorage.getItem('spotify_code_verifier');
+
+  // Limpa o parâmetro da URL imediatamente para evitar loops ao recarregar
+  window.history.replaceState({}, document.title, window.location.pathname);
 
   if (!verifier) {
     console.error('Code verifier ausente no localStorage');
@@ -85,19 +80,17 @@ export const handleAuthCallback = async (code) => {
       if (data.refresh_token) {
         localStorage.setItem('spotify_refresh_token', data.refresh_token);
       }
-      window.history.replaceState({}, document.title, window.location.pathname);
       return data.access_token;
+    } else {
+      console.error('Erro na resposta do token:', data);
+      return null;
     }
-    return null;
   } catch (err) {
     console.error('Erro ao trocar token:', err);
     return null;
   }
 };
 
-/**
- * Busca o perfil do usuário
- */
 export const fetchUserProfile = async (token) => {
   try {
     const res = await fetch('https://api.spotify.com/v1/me', {
@@ -110,9 +103,6 @@ export const fetchUserProfile = async (token) => {
   }
 };
 
-/**
- * Busca as faixas mais ouvidas pelo usuário
- */
 export const fetchTopTracks = async (token, timeRange = 'medium_term') => {
   try {
     const res = await fetch(`https://api.spotify.com/v1/me/top/tracks?time_range=${timeRange}&limit=10`, {
@@ -127,9 +117,6 @@ export const fetchTopTracks = async (token, timeRange = 'medium_term') => {
   }
 };
 
-/**
- * Busca os artistas mais ouvidos pelo usuário
- */
 export const fetchTopArtists = async (token, timeRange = 'medium_term') => {
   try {
     const res = await fetch(`https://api.spotify.com/v1/me/top/artists?time_range=${timeRange}&limit=10`, {
@@ -144,12 +131,9 @@ export const fetchTopArtists = async (token, timeRange = 'medium_term') => {
   }
 };
 
-/**
- * Logout
- */
 export const logoutSpotify = () => {
   localStorage.removeItem('spotify_access_token');
   localStorage.removeItem('spotify_refresh_token');
   localStorage.removeItem('spotify_code_verifier');
-  window.location.reload();
+  window.location.href = window.location.origin;
 };
