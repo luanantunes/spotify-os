@@ -1,12 +1,11 @@
 const CLIENT_ID = 'f4ae9203ee034084ab94d5ddbf94067b'.trim();
 const REDIRECT_URI = 'https://spotify-os.pf-store.workers.dev'; 
 
+// Escopos limpos e essenciais para evitar conflitos de 403 em contas Free/Dev
 const SCOPES = [
   'user-read-private',
   'user-read-email',
-  'user-top-read',
-  'user-read-playback-state',
-  'user-read-currently-playing'
+  'user-top-read'
 ];
 
 export const redirectToSpotify = async () => {
@@ -90,12 +89,6 @@ export const handleAuthCallback = async (code) => {
     return null;
   }
 };
-
-const SCOPES = [
-  'user-read-private',
-  'user-read-email',
-  'user-top-read'
-];
 
 export const fetchUserProfile = async (token) => {
   try {
