@@ -91,14 +91,27 @@ export const handleAuthCallback = async (code) => {
   }
 };
 
+const SCOPES = [
+  'user-read-private',
+  'user-read-email',
+  'user-top-read'
+];
+
 export const fetchUserProfile = async (token) => {
   try {
     const res = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (res.status === 401 || res.status === 403) return null;
+    
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`Erro 403/401 detalhado do Spotify (/v1/me):`, errorText);
+      return null;
+    }
+    
     return await res.json();
   } catch (err) {
+    console.error("Erro de rede ao buscar perfil:", err);
     return null;
   }
 };
